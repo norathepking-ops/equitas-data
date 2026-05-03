@@ -8,6 +8,11 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#00d68f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="EQUITAS">
 <style>
 :root{
   --bg-deep:#0a0d10;--bg-panel:#11161b;--bg-elevated:#161c23;--bg-hover:#1d242c;
@@ -231,6 +236,19 @@ input{font-family:inherit}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:var(--bg-deep)}
 ::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:3px}
+
+/* LIGHT MODE */
+body.light{
+  --bg-deep:#f0f4f8;--bg-panel:#ffffff;--bg-elevated:#f8fafc;--bg-hover:#e8edf5;
+  --border-subtle:#d1d8e0;--border-strong:#c4cdd6;
+  --text-primary:#1a1f2e;--text-secondary:#4a5568;--text-muted:#718096;
+}
+body.light .top-bar{box-shadow:0 1px 4px rgba(0,0,0,0.08)}
+body.light .search-input{background:#fff;color:#1a1f2e}
+body.light .brand-mark{box-shadow:0 0 12px rgba(0,214,143,0.3)}
+#themeBtn{background:none;border:1px solid var(--border-strong);border-radius:8px;padding:6px 10px;cursor:pointer;color:var(--text-secondary);font-size:16px;line-height:1;flex-shrink:0;transition:border-color 0.15s}
+#themeBtn:hover{border-color:var(--accent-green)}
+#installBtn{background:var(--accent-green);color:var(--bg-deep);border:none;border-radius:8px;padding:6px 14px;cursor:pointer;font-weight:700;font-size:12px;letter-spacing:0.05em;flex-shrink:0;display:none}
 </style>
 </head>
 <body>
@@ -258,6 +276,8 @@ input{font-family:inherit}
       <div class="search-dropdown" id="searchDropdown"></div>
     </div>
     <button class="search-btn" id="searchBtn">Search</button>
+    <button id="themeBtn" onclick="toggleTheme()" title="Toggle dark/light mode">☀️</button>
+    <button id="installBtn" onclick="installApp()" title="Install as app">⬇ Install</button>
   </div>
 </header>
 
@@ -422,7 +442,7 @@ input{font-family:inherit}
   </div>
 
   <div class="tab-content" id="tab-peers">
-    <div class="notes-box"><strong>PEER GROUP:</strong> Selected by GICS industry & market-cap proximity.</div>
+    <div class="notes-box"><strong>PEER GROUP:</strong> Selected by GICS industry; same sector as fallback; ±10× market-cap filter.</div>
     <div class="panel"><div class="panel-header"><div class="panel-title">Peer Comparison</div><div class="panel-meta" id="peerMeta">Industry</div></div><div class="table-scroll"><table class="data-table" id="peerTable"></table></div></div>
     <div class="grid-md-2">
       <div class="panel"><div class="panel-header"><div class="panel-title">Industry Snapshot</div></div><div class="panel-body"><table class="data-table" style="border:none"><tbody id="industryTable"></tbody></table></div></div>
@@ -454,6 +474,34 @@ input{font-family:inherit}
 </footer>
 
 <script>
+// THEME TOGGLE
+function toggleTheme(){
+  const isLight=document.body.classList.toggle('light');
+  document.getElementById('themeBtn').textContent=isLight?'🌙':'☀️';
+  localStorage.setItem('equitas-theme',isLight?'light':'dark');
+}
+if(localStorage.getItem('equitas-theme')==='light'){
+  document.body.classList.add('light');
+  document.addEventListener('DOMContentLoaded',()=>{document.getElementById('themeBtn').textContent='🌙';});
+}
+
+// PWA SERVICE WORKER
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
+}
+
+// PWA INSTALL PROMPT
+let _installPrompt;
+window.addEventListener('beforeinstallprompt',e=>{
+  e.preventDefault();
+  _installPrompt=e;
+  const btn=document.getElementById('installBtn');
+  if(btn)btn.style.display='block';
+});
+function installApp(){
+  if(_installPrompt)_installPrompt.prompt();
+}
+
 // ============================================================
 // LIVE DATA CONFIG
 // ============================================================
@@ -1250,9 +1298,17 @@ function renderRatios(s){
 function getPeers(curTkr){
   const cur=TICKERS.find(t=>t.tkr===curTkr);
   if(!cur)return[];
-  const peers=TICKERS.filter(t=>t.industry===cur.industry&&t.tkr!==curTkr).slice(0,5);
+  const d=DATA[curTkr];
+  const curCap=d?.mktCap||0;
+  const inCapRange=t=>{
+    if(!curCap)return true;
+    const cap=DATA[t.tkr]?.mktCap||0;
+    if(!cap)return true;
+    return Math.max(curCap,cap)/Math.min(curCap,cap)<=10;
+  };
+  const peers=TICKERS.filter(t=>t.industry===cur.industry&&t.tkr!==curTkr&&inCapRange(t)).slice(0,5);
   if(peers.length<4){
-    const sec=TICKERS.filter(t=>t.sector===cur.sector&&t.industry!==cur.industry&&t.tkr!==curTkr).slice(0,5-peers.length);
+    const sec=TICKERS.filter(t=>t.sector===cur.sector&&t.industry!==cur.industry&&t.tkr!==curTkr&&inCapRange(t)).slice(0,5-peers.length);
     peers.push(...sec);
   }
   return peers;
