@@ -1,12 +1,17 @@
 const CACHE = 'equitas-v2';
 const STATIC = ['./index.html', './manifest.json'];
 
-self.addEventListener('install', e =>
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(STATIC))));
+self.addEventListener('install', e => {
+  self.skipWaiting(); // activate immediately, no need to close tabs
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(STATIC)));
+});
 
 self.addEventListener('activate', e =>
-  e.waitUntil(caches.keys().then(keys =>
-    Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))));
+  e.waitUntil(
+    caches.keys()
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(() => self.clients.claim()) // take control of open pages immediately
+  ));
 
 self.addEventListener('fetch', e => {
   // data.json: network-first (always want fresh data), cache as offline fallback
