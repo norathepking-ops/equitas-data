@@ -20,7 +20,7 @@ BRANCH       = 'main'
 DATA_FILE       = 'data.json'
 PRICE_HIST_DAYS = 365
 NEWS_PER_TICKER = 8
-MAX_WORKERS     = 8
+MAX_WORKERS     = 4
 
 EDGAR_UA        = 'EQUITAS-Pipeline norathepking@gmail.com'
 EDGAR_CIK_URL   = 'https://www.sec.gov/files/company_tickers.json'
@@ -486,46 +486,73 @@ def classify_news(title, summary=''):
     if bear > bull: return 'bear'
     return 'neut'
 
-def fetch_news(tkr, max_items=NEWS_PER_TICKER, timeout=8):
+def fetch_news(tkr, max_items=NEWS_PER_TICKER, timeout=12):
     items = []
-    try:
-        url = f'https://feeds.finance.yahoo.com/rss/2.0/headline?s={tkr}&region=US&lang=en-US'
-        resp = SESSION.get(url, timeout=timeout)
-        if resp.status_code == 200 and len(resp.text) > 200:
-            feed = feedparser.parse(resp.text)
-            for entry in feed.entries[:max_items]:
-                title   = entry.get('title', '')
-                summary = re.sub(r'<[^>]+>', '', entry.get('summary', ''))[:240]
-                pub     = entry.get('published_parsed') or entry.get('updated_parsed')
-                ts      = int(time.mktime(pub)) if pub else int(time.time())
-                items.append({'title': title[:200], 'summary': summary.strip(),
-                               'source': 'Yahoo Finance', 'url': entry.get('link', ''),
-                               'ts': ts, 'tag': classify_news(title, summary)})
-    except Exception:
-        pass
-    if not items:
+    # Yahoo Finance RSS — 2 attempts
+    for attempt in range(2):
         try:
-            url = f'https://news.google.com/rss/search?q={tkr}+stock&hl=en-US&gl=US&ceid=US:en'
+            url  = f'https://feeds.finance.yahoo.com/rss/2.0/headline?s={tkr}&region=US&lang=en-US'
             resp = SESSION.get(url, timeout=timeout)
-            if resp.status_code == 200:
+            if resp.status_code == 200 and len(resp.text) > 200:
                 feed = feedparser.parse(resp.text)
                 for entry in feed.entries[:max_items]:
-                    title = entry.get('title', '')
-                    src   = getattr(entry, 'source', {}).get('title', 'Google News') if hasattr(entry, 'source') else 'Google News'
-                    pub   = entry.get('published_parsed')
-                    ts    = int(time.mktime(pub)) if pub else int(time.time())
-                    items.append({'title': title[:200], 'summary': '', 'source': src,
-                                   'url': entry.get('link', ''), 'ts': ts,
-                                   'tag': classify_news(title, '')})
+                    title   = entry.get('title', '')
+                    summary = re.sub(r'<[^>]+>', '', entry.get('summary', ''))[:240]
+                    pub     = entry.get('published_parsed') or entry.get('updated_parsed')
+                    ts      = int(time.mktime(pub)) if pub else int(time.time())
+                    items.append({'title': title[:200], 'summary': summary.strip(),
+                                   'source': 'Yahoo Finance', 'url': entry.get('link', ''),
+                                   'ts': ts, 'tag': classify_news(title, summary)})
+                if items:
+                    break
         except Exception:
             pass
+        if attempt == 0 and not items:
+            time.sleep(1)
+    # Google News RSS fallback — 2 attempts
+    if not items:
+        for attempt in range(2):
+            try:
+                url  = f'https://news.google.com/rss/search?q={tkr}+stock&hl=en-US&gl=US&ceid=US:en'
+                resp = SESSION.get(url, timeout=timeout)
+                if resp.status_code == 200:
+                    feed = feedparser.parse(resp.text)
+                    for entry in feed.entries[:max_items]:
+                        title = entry.get('title', '')
+                        src   = getattr(entry, 'source', {}).get('title', 'Google News') if hasattr(entry, 'source') else 'Google News'
+                        pub   = entry.get('published_parsed')
+                        ts    = int(time.mktime(pub)) if pub else int(time.time())
+                        items.append({'title': title[:200], 'summary': '', 'source': src,
+                                       'url': entry.get('link', ''), 'ts': ts,
+                                       'tag': classify_news(title, '')})
+                    if items:
+                        break
+            except Exception:
+                pass
+            if attempt == 0 and not items:
+                time.sleep(1)
     return items
 
 # ============================================================
 # FETCH TICKER
 # ============================================================
-def fetch_ticker(meta, edgar_data=None):
-    tkr = meta['tkr']
+def fetch_ticker(meta, edgar_data=None, prev_record=None):
+    tkr     = meta['tkr']
+    now_ts  = datetime.now(timezone.utc)
+    cache   = (prev_record or {}).get('_cache', {})
+
+    def is_fresh(key, ttl_days):
+        ts_str = cache.get(key)
+        if not ts_str:
+            return False
+        try:
+            ts = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            return (now_ts - ts).total_seconds() < ttl_days * 86400
+        except Exception:
+            return False
+
     try:
         t    = yf.Ticker(tkr)
         info = t.info or {}
@@ -675,20 +702,26 @@ def fetch_ticker(meta, edgar_data=None):
             if ni_v is not None and ta_v and ta_v > 0:
                 roa = round(ni_v / ta_v * 100, 2)
 
-        rec_data = None
-        try:
-            recs = t.recommendations
-            if recs is not None and not recs.empty:
-                latest = recs.iloc[0]
-                rec_data = {
-                    'strong_buy':  int(latest.get('strongBuy', 0)),
-                    'buy':         int(latest.get('buy', 0)),
-                    'hold':        int(latest.get('hold', 0)),
-                    'sell':        int(latest.get('sell', 0)),
-                    'strong_sell': int(latest.get('strongSell', 0)),
-                }
-        except Exception:
-            pass
+        # recommendations — cached 7 days (saves 1 yfinance call/ticker/day)
+        rec_data     = None
+        new_analyst_ts = cache.get('analyst_ts')
+        if is_fresh('analyst_ts', 7) and prev_record and prev_record.get('analyst', {}).get('recommendations'):
+            rec_data = prev_record['analyst']['recommendations']
+        else:
+            try:
+                recs = t.recommendations
+                if recs is not None and not recs.empty:
+                    latest = recs.iloc[0]
+                    rec_data = {
+                        'strong_buy':  int(latest.get('strongBuy', 0)),
+                        'buy':         int(latest.get('buy', 0)),
+                        'hold':        int(latest.get('hold', 0)),
+                        'sell':        int(latest.get('sell', 0)),
+                        'strong_sell': int(latest.get('strongSell', 0)),
+                    }
+                    new_analyst_ts = now_ts.isoformat()
+            except Exception:
+                pass
 
         pt_high      = safe_round(info.get('targetHighPrice'), 2)
         pt_low       = safe_round(info.get('targetLowPrice'), 2)
@@ -731,6 +764,7 @@ def fetch_ticker(meta, edgar_data=None):
                 'ptMean': pt_mean, 'ptMedian': pt_median,
             },
             'news': news,
+            '_cache': {'analyst_ts': new_analyst_ts},
         }
 
     except Exception as e:
@@ -771,12 +805,25 @@ if __name__ == '__main__':
             edgar_miss += 1
     print(f'\n✓ Phase A: {edgar_ok} EDGAR, {edgar_miss} yfinance fallback\n')
 
+    # Load previous data.json for stale-if-error cache
+    prev_map = {}
+    try:
+        prev_local = os.path.join(os.path.dirname(__file__), DATA_FILE)
+        if os.path.exists(prev_local):
+            with open(prev_local, 'r', encoding='utf-8') as f:
+                prev_json = json.load(f)
+            for r in prev_json.get('tickers', []):
+                prev_map[r['tkr']] = r
+            print(f'  Cache: loaded {len(prev_map)} previous records from {DATA_FILE}')
+    except Exception as ex_c:
+        print(f'  Cache: could not load previous {DATA_FILE} ({ex_c})')
+
     # PHASE B: yfinance parallel
     results = []
     errors  = []
     start   = time.time()
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        futures = {ex.submit(fetch_ticker, m, edgar_results.get(m['tkr'])): m for m in TICKERS}
+        futures = {ex.submit(fetch_ticker, m, edgar_results.get(m['tkr']), prev_map.get(m['tkr'])): m for m in TICKERS}
         for f in tqdm(as_completed(futures), total=len(futures), desc='Phase B: yfinance quote+analyst'):
             r = f.result()
             (errors if 'error' in r else results).append(r)
@@ -785,6 +832,26 @@ if __name__ == '__main__':
     print(f'\n✓ Done in {elapsed:.1f}s  |  Success: {len(results)}/{len(TICKERS)}  |  Errors: {len(errors)}')
     if errors:
         print('Failed:', [e['tkr'] for e in errors[:10]])
+        # Stale-if-error: use previous data for failed tickers (up to 7 days old)
+        stale_used = 0
+        now_ts = datetime.now(timezone.utc)
+        for e in errors:
+            tkr = e['tkr']
+            if tkr in prev_map:
+                prev = prev_map[tkr].copy()
+                gen_str = prev_json.get('meta', {}).get('generated_at_utc', '')
+                try:
+                    gen_ts = datetime.fromisoformat(gen_str.replace('Z', '+00:00'))
+                    if (now_ts - gen_ts).total_seconds() > 7 * 86400:
+                        continue
+                except Exception:
+                    pass
+                prev['_stale'] = True
+                results.append(prev)
+                stale_used += 1
+        if stale_used:
+            print(f'✓ Stale cache used for {stale_used} failed ticker(s)')
+        results.sort(key=lambda r: r['tkr'])
 
     # Build JSON
     now_bkk = datetime.now(BKK)
