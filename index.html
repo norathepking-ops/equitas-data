@@ -506,27 +506,59 @@ function installApp(){
 // LIVE DATA CONFIG
 // ============================================================
 // Replace these with your GitHub repo (after running update_pipeline.ipynb)
-const DATA_URL = 'https://raw.githubusercontent.com/norathepking-ops/equitas-data/main/data.json';
+const DATA_URL = 'https://norathepking-ops.github.io/equitas-data/data.json';
 // Fallback: if DATA_URL fails, use embedded SEED data below
 
 let LIVE_DATA = null;     // populated after fetch; null means use SEED fallback
 let DATA_META = null;     // generated_display, ticker_count, etc.
 
-async function loadLiveData(){
+const CACHE_KEY='equitas_data';
+const CACHE_TTL=4*3600*1000;
+function _applyLiveData(data){
+  LIVE_DATA={};
+  data.tickers.forEach(r=>{LIVE_DATA[r.tkr]=r;});
+  DATA_META=data.meta;
+}
+function updateDataStatusBadge(){
+  const el=document.getElementById('lastUpdated');
+  if(!el)return;
+  if(DATA_META){
+    el.textContent='DATA · '+DATA_META.generated_display.replace(' GMT+7','');
+  }else{
+    el.textContent='OFFLINE · '+new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false});
+  }
+}
+async function loadLiveData(bg=false){
+  // 1. Try localStorage cache (instant load on subsequent visits)
+  if(!bg){
+    try{
+      const raw=localStorage.getItem(CACHE_KEY);
+      if(raw){
+        const{ts,data}=JSON.parse(raw);
+        if(Date.now()-ts<CACHE_TTL&&data.tickers&&Array.isArray(data.tickers)){
+          _applyLiveData(data);
+          updateDataStatusBadge();
+          setTimeout(()=>loadLiveData(true),300); // refresh in background
+          return true;
+        }
+      }
+    }catch(e){}
+  }
+  // 2. Fetch from GitHub Pages CDN
   try{
-    const ctrl = new AbortController();
-    setTimeout(()=>ctrl.abort(), 30000);
-    const res = await fetch(DATA_URL, {signal: ctrl.signal, cache: 'no-cache'});
-    if(!res.ok) throw new Error('http ' + res.status);
-    const json = await res.json();
-    if(!json.tickers || !Array.isArray(json.tickers)) throw new Error('bad shape');
-    // Build map: tkr -> record
-    LIVE_DATA = {};
-    json.tickers.forEach(r => { LIVE_DATA[r.tkr] = r; });
-    DATA_META = json.meta;
+    const ctrl=new AbortController();
+    setTimeout(()=>ctrl.abort(),30000);
+    const res=await fetch(DATA_URL,{signal:ctrl.signal,cache:'no-cache'});
+    if(!res.ok)throw new Error('http '+res.status);
+    const data=await res.json();
+    if(!data.tickers||!Array.isArray(data.tickers))throw new Error('bad shape');
+    _applyLiveData(data);
+    try{localStorage.setItem(CACHE_KEY,JSON.stringify({ts:Date.now(),data}));}catch(e){}
+    updateDataStatusBadge();
     return true;
   }catch(e){
-    console.warn('Live data fetch failed:', e.message);
+    console.warn('Live data fetch failed:',e.message);
+    if(!bg)updateDataStatusBadge();
     return false;
   }
 }
