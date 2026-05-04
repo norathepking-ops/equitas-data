@@ -1,4 +1,4 @@
-const CACHE = 'equitas-v1';
+const CACHE = 'equitas-v2';
 const STATIC = ['./index.html', './manifest.json'];
 
 self.addEventListener('install', e =>
@@ -18,6 +18,15 @@ self.addEventListener('fetch', e => {
     );
     return;
   }
-  // static assets: cache-first
+  // index.html: network-first so code updates always reach users; cache as offline fallback
+  if (e.request.mode === 'navigate' || e.request.url.endsWith('index.html') || e.request.url.endsWith('/')) {
+    e.respondWith(
+      fetch(e.request)
+        .then(r => { caches.open(CACHE).then(c => c.put(e.request, r.clone())); return r; })
+        .catch(() => caches.match(e.request))
+    );
+    return;
+  }
+  // other static assets: cache-first
   e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
 });
