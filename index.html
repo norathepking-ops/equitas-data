@@ -515,7 +515,7 @@ let DATA_META = null;     // generated_display, ticker_count, etc.
 async function loadLiveData(){
   try{
     const ctrl = new AbortController();
-    setTimeout(()=>ctrl.abort(), 8000);
+    setTimeout(()=>ctrl.abort(), 30000);
     const res = await fetch(DATA_URL, {signal: ctrl.signal, cache: 'no-cache'});
     if(!res.ok) throw new Error('http ' + res.status);
     const json = await res.json();
@@ -1540,26 +1540,49 @@ function renderNews(tkr,s){
 }
 
 function renderAnalystActions(tkr,s){
-  const firms=['Morgan Stanley','Goldman Sachs','JPMorgan','Bank of America','Wells Fargo','Citi','Barclays','UBS','Jefferies','Wedbush','Bernstein','Evercore'];
-  const ratings=['Overweight','Buy','Hold','Sell','Outperform','Neutral','Strong Buy'];
-  const actions=['Initiated','Reiterated','Upgraded','Downgraded','PT Raised','PT Lowered'];
-  const dates=['Apr 28','Apr 25','Apr 23','Apr 22','Apr 18','Apr 15','Apr 11','Apr 09','Apr 04','Apr 02'];
-  document.getElementById('analystActions').innerHTML=`<thead><tr><th>Date</th><th>Firm</th><th>Action</th><th>Rating</th><th class="col-num">PT Change</th><th class="col-num">Δ</th></tr></thead><tbody>${dates.map(d=>{
-    const action=actions[Math.floor(Math.random()*actions.length)];
-    const rating=ratings[Math.floor(Math.random()*ratings.length)];
-    const oldPT=s.price*(1+(Math.random()-0.3)*0.2);
-    const newPT=oldPT*(1+(Math.random()-0.3)*0.1);
-    const delta=(newPT-oldPT)/oldPT*100;
-    const cls=(action.includes('Up')||action.includes('Raised'))?'action-up':(action.includes('Down')||action.includes('Lowered'))?'action-down':'action-neut';
-    return `<tr>
-      <td class="col-num" style="color:var(--text-muted)">${d}</td>
-      <td class="col-label bold">${firms[Math.floor(Math.random()*firms.length)]}</td>
-      <td><span class="action-pill ${cls}">${action}</span></td>
-      <td class="col-label">${rating}</td>
-      <td class="col-num">$${oldPT.toFixed(0)}→$${newPT.toFixed(0)}</td>
-      <td class="col-num ${delta>=0?'up':'dn'}">${delta>=0?'+':''}${delta.toFixed(1)}%</td>
-    </tr>`;
-  }).join('')}</tbody>`;
+  const a=(s._live&&s._analyst&&s._analyst.recommendations)?s._analyst:null;
+  const el=document.getElementById('analystActions');
+  if(!a){
+    el.innerHTML=`<tbody><tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:32px 0">Analyst data unavailable</td></tr></tbody>`;
+    return;
+  }
+  const rec=a.recommendations;
+  const total=(rec.strong_buy||0)+(rec.buy||0)+(rec.hold||0)+(rec.sell||0)+(rec.strong_sell||0);
+  const pct=v=>total?Math.round((v||0)/total*100):0;
+  const recLabels=['','Strong Buy','Buy','Hold','Sell','Strong Sell'];
+  const consensus=a.recMean?(recLabels[Math.round(a.recMean)]||''):'';
+  const upside=(a.ptMean&&s.price)?((a.ptMean-s.price)/s.price*100):null;
+  const upsideStr=upside!=null?`<span class="${upside>=0?'up':'dn'}" style="font-weight:600">${upside>=0?'+':''}${upside.toFixed(1)}%</span>`:'';
+  el.innerHTML=`<tbody><tr><td colspan="6" style="padding:16px 8px">
+    <div style="margin-bottom:12px">
+      <div style="display:flex;gap:3px;height:14px;border-radius:7px;overflow:hidden;margin-bottom:8px">
+        <div style="width:${pct(rec.strong_buy)}%;background:#22c55e" title="Strong Buy: ${rec.strong_buy||0}"></div>
+        <div style="width:${pct(rec.buy)}%;background:#86efac" title="Buy: ${rec.buy||0}"></div>
+        <div style="width:${pct(rec.hold)}%;background:var(--border)" title="Hold: ${rec.hold||0}"></div>
+        <div style="width:${pct(rec.sell)}%;background:#fca5a5" title="Sell: ${rec.sell||0}"></div>
+        <div style="width:${pct(rec.strong_sell)}%;background:#ef4444" title="Strong Sell: ${rec.strong_sell||0}"></div>
+      </div>
+      <div style="display:flex;gap:14px;font-size:11px">
+        <span style="color:#22c55e">Strong Buy&nbsp;${rec.strong_buy||0}</span>
+        <span style="color:#86efac">Buy&nbsp;${rec.buy||0}</span>
+        <span style="color:var(--text-muted)">Hold&nbsp;${rec.hold||0}</span>
+        <span style="color:#fca5a5">Sell&nbsp;${rec.sell||0}</span>
+        <span style="color:#ef4444">Strong Sell&nbsp;${rec.strong_sell||0}</span>
+      </div>
+    </div>
+    ${(a.ptHigh||a.ptMean||a.ptLow)?`<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+      ${[['High',a.ptHigh],['Mean',a.ptMean],['Median',a.ptMedian],['Low',a.ptLow]].map(([l,v])=>
+        `<div style="text-align:center;padding:10px 6px;background:var(--card-bg);border-radius:8px;border:1px solid var(--border)">
+          <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">${l}</div>
+          <div style="font-size:16px;font-weight:700;margin-top:2px">${v?'$'+v.toFixed(0):'—'}</div>
+        </div>`).join('')}
+    </div>`:''}
+    <div style="font-size:12px;color:var(--text-muted);display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+      <span>${a.numAnalysts||0} analysts</span>
+      ${consensus?`<span>Consensus: <strong style="color:var(--text-primary)">${consensus}</strong></span>`:''}
+      ${s.price&&a.ptMean?`<span>Upside to mean PT: ${upsideStr}</span>`:''}
+    </div>
+  </td></tr></tbody>`;
 }
 
 const BIZ_DESC={
