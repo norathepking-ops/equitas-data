@@ -1324,11 +1324,11 @@ function renderRatios(s){
 function getPeers(curTkr){
   const cur=TICKERS.find(t=>t.tkr===curTkr);
   if(!cur)return[];
-  const d=DATA[curTkr];
-  const curCap=d?.mktCap||0;
+  const d=getSeed(curTkr);
+  const curCap=d?.mcap||0;
   const inCapRange=t=>{
     if(!curCap)return true;
-    const cap=DATA[t.tkr]?.mktCap||0;
+    const cap=getSeed(t.tkr)?.mcap||0;
     if(!cap)return true;
     return Math.max(curCap,cap)/Math.min(curCap,cap)<=10;
   };
