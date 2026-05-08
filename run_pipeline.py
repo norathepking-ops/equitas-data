@@ -10,7 +10,7 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='repla
 # ============================================================
 # กรอก 2 ค่านี้ก่อนรัน
 # ============================================================
-GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '')
+GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', 'ghp_xxx')  # set via env var or replace here
 GITHUB_REPO  = 'norathepking-ops/equitas-data'
 BRANCH       = 'main'
 
@@ -487,6 +487,17 @@ def fetch_ticker(meta, edgar_data=None, prev_record=None):
         change_pct = round((change / prev_close) * 100, 2) if (prev_close and prev_close > 0) else 0
         mcap       = to_billions(info.get('marketCap'))
 
+        # Pre-market / after-hours (free via yfinance info)
+        pre_price  = safe_round(info.get('preMarketPrice'), 2)
+        pre_chg    = safe_round(info.get('preMarketChange'), 2)
+        pre_pct_raw = safe(info.get('preMarketChangePercent'))
+        pre_pct    = round(pre_pct_raw * 100, 2) if pre_pct_raw is not None else None
+
+        post_price = safe_round(info.get('postMarketPrice'), 2)
+        post_chg   = safe_round(info.get('postMarketChange'), 2)
+        post_pct_raw = safe(info.get('postMarketChangePercent'))
+        post_pct   = round(post_pct_raw * 100, 2) if post_pct_raw is not None else None
+
         pe        = safe_round(info.get('trailingPE'), 1)
         ev_ebitda = safe_round(info.get('enterpriseToEbitda'), 1)
         div_y     = pct(info.get('dividendYield'))
@@ -659,6 +670,8 @@ def fetch_ticker(meta, edgar_data=None, prev_record=None):
                 'price': price, 'change': change, 'changePct': change_pct,
                 'prevClose': prev_close, 'currency': currency,
                 'wk52High': wk52_high, 'wk52Low': wk52_low, 'avgVolM': avg_vol_m,
+                'preMarket':  {'price': pre_price,  'change': pre_chg,  'changePct': pre_pct}  if pre_price  is not None else None,
+                'postMarket': {'price': post_price, 'change': post_chg, 'changePct': post_pct} if post_price is not None else None,
             },
             'fundamentals': {
                 'mcap': mcap, 'pe': pe, 'ev': ev_ebitda, 'divY': div_y,

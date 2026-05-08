@@ -74,6 +74,10 @@ input{font-family:inherit}
 .price-change{font-family:'JetBrains Mono',monospace;font-size:11px;margin-top:3px;white-space:nowrap}
 .price-change.up{color:var(--accent-green)}
 .price-change.dn{color:var(--accent-red)}
+.price-ext{font-family:'JetBrains Mono',monospace;font-size:10px;margin-top:5px;color:var(--text-secondary);white-space:nowrap}
+.price-ext .ext-label{font-size:9px;color:var(--text-muted);letter-spacing:0.1em;text-transform:uppercase;margin-right:3px}
+.price-ext .up{color:var(--accent-green)}
+.price-ext .dn{color:var(--accent-red)}
 .stock-tags{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
 .meta-tag{padding:3px 8px;border:1px solid var(--border-strong);border-radius:3px;font-size:10px;color:var(--text-muted);letter-spacing:0.05em;text-transform:uppercase;white-space:nowrap}
 
@@ -222,6 +226,7 @@ input{font-family:inherit}
   .stock-tkr{font-size:32px}
   .price-current{font-size:28px}
   .price-change{font-size:13px}
+  .price-ext{font-size:11px}
   .kpi-grid{grid-template-columns:repeat(4,1fr)}
   .grid-md-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   .grid-md-2>.panel{margin-bottom:0}
@@ -290,6 +295,7 @@ body.light .brand-mark{box-shadow:0 0 12px rgba(0,214,143,0.3)}
     <div class="price-col">
       <div class="price-current" id="hdrPrice">$236.48</div>
       <div class="price-change up" id="hdrChange">+1.82 (+0.78%)</div>
+      <div class="price-ext" id="hdrExtMarket" style="display:none"></div>
     </div>
   </div>
   <div class="stock-tags">
@@ -1678,6 +1684,20 @@ function renderHeader(tkr,s){
   const chgEl=document.getElementById('hdrChange');
   chgEl.textContent=(change>=0?'+':'')+change.toFixed(2)+' ('+(pct>=0?'+':'')+pct.toFixed(2)+'%)';
   chgEl.className='price-change '+(change>=0?'up':'dn');
+
+  const extEl=document.getElementById('hdrExtMarket');
+  if(s._live && s._quote){
+    const pre=s._quote.preMarket;
+    const post=s._quote.postMarket;
+    const ext=pre||post;
+    if(ext&&ext.price!=null){
+      const label=pre?'PRE-MKT':'POST-MKT';
+      const ec=ext.change||0;const ep=ext.changePct||0;
+      const cc=ec>=0?'up':'dn';
+      extEl.innerHTML=`<span class="ext-label">${label}</span>$${ext.price.toFixed(2)} <span class="${cc}">${ec>=0?'+':''}${ec.toFixed(2)} (${ep>=0?'+':''}${ep.toFixed(2)}%)</span>`;
+      extEl.style.display='';
+    }else{extEl.style.display='none';}
+  }else{extEl.style.display='none';}
 
   document.getElementById('qsMcap').textContent=fmt.bn(s.mcap);
   document.getElementById('qsPE').textContent=s.pe?s.pe.toFixed(1)+'x':'n/a';
